@@ -144,16 +144,17 @@ def checkout_reply(chat_id, request):
         carts.setdefault(host, []).append(f"{variant['id']}:{quantity}")
         summary.append(f"{quantity} × {name} ({variant['title']})")
 
-    checkout_buttons = [
-        [{"text": f"Review and pay on {STORE_NAMES[host]}", "url": checkout_button_url(host, items)}]
+    checkout_links = [
+        f"Review and pay on {STORE_NAMES[host]}\n{checkout_button_url(host, items)}"
         for host, items in carts.items()
     ]
     return {
         "chat_id": chat_id,
         "text": "Checkout is ready with the lowest-priced available size for each item.\n\n"
                 + "\n".join(summary)
-                + "\n\nReview shipping and the total, then pay on the store’s checkout page.",
-        "reply_markup": {"inline_keyboard": checkout_buttons},
+                + "\n\nReview shipping and the total, then pay on the store’s checkout page.\n\n"
+                + "\n\n".join(checkout_links),
+        "link_preview_options": {"is_disabled": True},
     }
 
 
