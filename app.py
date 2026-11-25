@@ -328,15 +328,17 @@ CASE_FIELDS = {
 }
 
 
-def case_lookup(chat_id, court, method, reference):
+def case_lookup(chat_id, court, method, reference, location=""):
     portal = COURT_PORTALS[court]
     if method == "CNR":
         instructions = "Open Search by CNR and enter the CNR below."
         button_label = "Open eCourts CNR search"
     else:
-        if court == "district":
-            portal += "casestatus/"
-        instructions = f"Select the court and the {method} tab. Enter the details below."
+        if court == "district" and method == "Case number" and re.search(r"\branga\s*reddy\b", location, re.I):
+            portal = "https://rangareddy.dcourts.gov.in/case-status-search-by-case-number/"
+            instructions = "Choose your court complex or establishment and enter the case details below."
+        else:
+            instructions = f"Open Case Status, select your court, and choose {method}. Enter the details below."
         button_label = "Open eCourts Case Status"
     return {
         "chat_id": chat_id,
@@ -410,13 +412,13 @@ def court_reply(chat_id, text):
                 return respond("Send the lookup details in a short message.")
             reference = f"Court: {session['location']}\nDetails: {text}"
             if session["method"] == "Case number":
-                match = re.fullmatch(r"([A-Za-z][A-Za-z. ]*?)\s+(\d+)\s*[/ -]\s*(\d{4})", text)
+                match = re.fullmatch(r"([A-Za-z][A-Za-z. ]*?)[,\s]+(\d+)\s*[,/ -]\s*(\d{4})", text)
                 if match:
                     kind, number, year = match.groups()
                     reference = (f"Court: {session['location']}\nCase type: {kind.upper()}\n"
                                  f"Case number: {number}\nRegistration year: {year}")
             session["step"] = "result"
-            return case_lookup(chat_id, session["court"], session["method"], reference)
+            return case_lookup(chat_id, session["court"], session["method"], reference, session["location"])
 
         fields = []
         for label, pattern in CASE_FIELDS.items():
