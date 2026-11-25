@@ -317,6 +317,7 @@ def fastag_balance_reply(chat_id):
 
 FASTAG_AMOUNT = "500.00"
 FASTAG_ISSUERS = {
+    "idfc": ("IDFC FIRST Bank", "idfcnetc"),
     "hdfc": ("HDFC Bank", "hdfcbank"),
 }
 
@@ -336,7 +337,7 @@ def fastag_reply(chat_id):
             if plate:
                 path = f"/fastag/{issuer}/{expires}"
                 buttons.append([{
-                    "text": f"₹500 in PhonePe · {plate[-4:]}",
+                    "text": f"₹500 in PhonePe · {bank} · {plate[-4:]}",
                     "url": f"{origin}{path}/{checkout_signature(path)}",
                 }])
 
@@ -347,7 +348,7 @@ def fastag_reply(chat_id):
 
 
 def fastag_payment_page(path):
-    match = re.fullmatch(r"(/fastag/(hdfc)/([0-9]{1,12}))/([a-f0-9]{64})", path)
+    match = re.fullmatch(r"(/fastag/(idfc|hdfc)/([0-9]{1,12}))/([a-f0-9]{64})", path)
     if not match or not webhook_secret():
         return None
     signed_path, issuer, expires, signature = match.groups()
