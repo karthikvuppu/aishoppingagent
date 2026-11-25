@@ -389,6 +389,22 @@ def reply(update, owner_id):
         return None
 
     text = text.strip()
+    if re.fullmatch(r"/?(?:get(?:\s+(?:fastag\s+)?balances?)?|(?:check\s+)?fastag\s+balances?)", text, re.IGNORECASE):
+        return {
+            "chat_id": chat["id"],
+            "text": (
+                "Open your bank’s WhatsApp balance check from your registered number. "
+                "For IDFC, send Hi and choose FASTag Balance. "
+                "For HDFC, send FASTag and choose Balance/Recharge. "
+                "You can also use Check now for either vehicle in Paytm."
+            ),
+            "reply_markup": {"inline_keyboard": [
+                [{"text": "IDFC FIRST balance", "url": "https://wa.me/919555555555?text=Hi"}],
+                [{"text": "HDFC FASTag balance", "url": "https://wa.me/917070022222?text=FASTag"}],
+                [{"text": "Open Paytm FASTag", "url": "https://paytm.com/fastag-recharge"}],
+            ]},
+        }
+
     if re.fullmatch(r"/?(?:recharge\s+)?(?:fastag|fast[ -]?tag)(?:\s+recharge)?", text, re.IGNORECASE):
         return fastag_reply(chat["id"])
 
