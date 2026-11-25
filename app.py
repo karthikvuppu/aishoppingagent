@@ -146,6 +146,36 @@ def checkout_reply(chat_id, request):
     }
 
 
+def amazon_reply(chat_id, text):
+    command = re.fullmatch(r"/?amazon(?:\s*:\s*|\s+)(.*)", text, re.IGNORECASE)
+    query = command.group(1).strip() if command else text
+    if query.lower().startswith("https://"):
+        try:
+            url = urlsplit(query)
+        except ValueError:
+            return None
+        if url.netloc.lower() not in {"amazon.in", "www.amazon.in"}:
+            return None
+        asin = re.search(r"/(?:dp|gp/product)/([a-z0-9]{10})(?:/|$)", url.path, re.IGNORECASE)
+        if not asin:
+            return {"chat_id": chat_id, "text": "Paste an Amazon.in product link or try “Amazon: kids shampoo”."}
+        destination = f"https://www.amazon.in/dp/{asin.group(1).upper()}"
+        label = "Open product on Amazon India"
+    elif command and query and len(query) <= 250:
+        destination = f"https://www.amazon.in/s?{urlencode({'k': query})}"
+        label = "View Amazon India search results"
+    elif command or text.lower() in {"amazon", "/amazon"}:
+        return {"chat_id": chat_id, "text": "Try “Amazon: kids shampoo” or paste an Amazon.in product link."}
+    else:
+        return None
+
+    return {
+        "chat_id": chat_id,
+        "text": "Choose your item and complete checkout on Amazon India.",
+        "reply_markup": {"inline_keyboard": [[{"text": label, "url": destination}]]},
+    }
+
+
 def reply(update, owner_id):
     if not isinstance(update, dict):
         return None
@@ -165,7 +195,12 @@ def reply(update, owner_id):
     ):
         return None
 
-    purchase = BUY_REQUEST.fullmatch(text.strip())
+    text = text.strip()
+    amazon = amazon_reply(chat["id"], text)
+    if amazon is not None:
+        return amazon
+
+    purchase = BUY_REQUEST.fullmatch(text)
     if purchase:
         return checkout_reply(chat["id"], purchase.group(1))
 
@@ -183,7 +218,7 @@ def reply(update, owner_id):
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”.'
+        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. For Amazon India, try “Amazon: kids shampoo”.'
     return result
 
 
