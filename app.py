@@ -16,6 +16,12 @@ PRODUCTS = {
     "ghee": ("A2 Desi Cow Cultured Ghee", "https://vaaradhifarms.com/products/a2-desi-cow-ghee"),
     "honey": ("Farm Fresh Raw Natural Honey", "https://vaaradhifarms.com/products/natural-honey"),
 }
+STORE_ORIGIN = "https://vaaradhifarms.com"
+BUY_REQUEST = re.compile(
+    r"^/?(?:buy|order)\s+(both|(?:[1-9][0-9]?\s+)?(?:ghee|honey)"
+    r"(?:(?:\s+and\s+|,\s*)(?:[1-9][0-9]?\s+)?(?:ghee|honey))?)[.!]?$",
+    re.IGNORECASE,
+)
 MAX_UPDATE_BYTES = 256 * 1024
 LOG = logging.getLogger(__name__)
 
@@ -42,6 +48,54 @@ def webhook_secret():
     return ""
 
 
+def available_variant(product_url):
+    request = Request(product_url + ".js", headers={"Accept": "application/json"})
+    with urlopen(request, timeout=3) as response:
+        product = json.loads(response.read(262_144))
+    variants = [
+        variant for variant in product["variants"]
+        if variant["available"] is True and type(variant["id"]) is int
+        and variant["id"] > 0 and type(variant["price"]) is int
+        and isinstance(variant["title"], str)
+    ]
+    return min(variants, key=lambda variant: variant["price"], default=None)
+
+
+def checkout_reply(chat_id, request):
+    quantities = {}
+    if request.lower() == "both":
+        quantities = dict.fromkeys(PRODUCTS, 1)
+    else:
+        for quantity, key in re.findall(r"(?:(\d+)\s+)?(ghee|honey)", request.lower()):
+            quantities[key] = quantities.get(key, 0) + int(quantity or "1")
+
+    items = []
+    summary = []
+    for key, quantity in quantities.items():
+        name, url = PRODUCTS[key]
+        try:
+            variant = available_variant(url)
+        except (URLError, TimeoutError, ValueError, KeyError, TypeError):
+            variant = None
+        if variant is None:
+            return {
+                "chat_id": chat_id,
+                "text": f"I couldn’t confirm availability for {name}. Check the store before ordering.",
+                "reply_markup": {"inline_keyboard": [[{"text": name, "url": url}]]},
+            }
+        items.append(f"{variant['id']}:{quantity}")
+        summary.append(f"{quantity} × {name} ({variant['title']})")
+
+    checkout_url = f"{STORE_ORIGIN}/cart/{','.join(items)}"
+    return {
+        "chat_id": chat_id,
+        "text": "Checkout is ready with the lowest-priced available size for each item.\n\n"
+                + "\n".join(summary)
+                + "\n\nReview shipping and the total, then pay on Vaaradhi Farms.",
+        "reply_markup": {"inline_keyboard": [[{"text": "Review and pay on Vaaradhi Farms", "url": checkout_url}]]},
+    }
+
+
 def reply(update, owner_id):
     if not isinstance(update, dict):
         return None
@@ -61,6 +115,10 @@ def reply(update, owner_id):
     ):
         return None
 
+    purchase = BUY_REQUEST.fullmatch(text.strip())
+    if purchase:
+        return checkout_reply(chat["id"], purchase.group(1))
+
     words = set(re.findall(r"[a-z]+", text.lower()))
     selected = [product for key, product in PRODUCTS.items() if key in words]
     if words.intersection({"both", "shop", "products"}):
@@ -73,7 +131,7 @@ def reply(update, owner_id):
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or both. For example, “Order ghee and honey”.'
+        result["text"] = 'Ask for ghee, honey, or both. For checkout, try “buy ghee and honey” or “buy 2 ghee and 1 honey”.'
     return result
 
 
