@@ -321,6 +321,17 @@ def reply(update, owner_id):
         return None
 
     text = text.strip()
+    if re.fullmatch(r"/?(?:recharge\s+)?(?:fastag|fast[ -]?tag)(?:\s+recharge)?", text, re.IGNORECASE):
+        return {
+            "chat_id": chat["id"],
+            "text": "Open Paytm to select a saved FASTag, or choose the issuer below. Review the vehicle and amount in Paytm before paying.",
+            "reply_markup": {"inline_keyboard": [
+                [{"text": "Open Paytm FASTag", "url": "https://paytm.com/fastag-recharge"}],
+                [{"text": "IDFC FIRST Bank", "url": "https://paytm.com/fastag-recharge/idfc-first-bank"}],
+                [{"text": "HDFC Bank", "url": "https://paytm.com/fastag-recharge/hdfc-bank"}],
+            ]},
+        }
+
     aarogya = aarogya_reply(chat["id"], text)
     if aarogya is not None:
         return aarogya
