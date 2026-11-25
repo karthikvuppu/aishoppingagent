@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: aishoppingagent
+    runtime: python
+    plan: free
+    buildCommand: python -m py_compile app.py
+    startCommand: python app.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_OWNER_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
