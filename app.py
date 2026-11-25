@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import URLError
 from urllib.parse import urlsplit
@@ -29,6 +30,16 @@ def telegram(method, payload):
     with urlopen(request, timeout=8) as response:
         if not json.load(response).get("ok"):
             raise ValueError("Telegram rejected the request")
+
+
+def webhook_secret():
+    explicit_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if explicit_secret:
+        return explicit_secret
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if token:
+        return hmac.digest(token.encode(), b"shopping-assistant-webhook-v1", "sha256").hex()
+    return ""
 
 
 def reply(update, owner_id):
@@ -88,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/telegram/webhook":
             self.respond(404)
             return
-        expected = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+        expected = webhook_secret()
         owner_id = os.getenv("TELEGRAM_OWNER_ID", "")
         if not expected or not owner_id or not os.getenv("TELEGRAM_BOT_TOKEN"):
             self.respond(503)
@@ -126,7 +137,7 @@ def register_webhook(base_url):
     url = urlsplit(base_url)
     if url.scheme != "https" or not url.hostname or url.path not in ("", "/") or url.query or url.fragment:
         raise ValueError("Provide the HTTPS service origin")
-    secret = os.environ["TELEGRAM_WEBHOOK_SECRET"]
+    secret = webhook_secret()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", secret):
         raise ValueError("Invalid webhook secret format")
     telegram(
@@ -139,6 +150,21 @@ def register_webhook(base_url):
     )
 
 
+def register_render_webhook(base_url, stopping):
+    while not stopping.is_set():
+        try:
+            register_webhook(base_url)
+        except ValueError:
+            LOG.error("Invalid Telegram webhook configuration")
+            return
+        except (URLError, TimeoutError):
+            LOG.warning("Telegram webhook registration failed. Retrying in 60 seconds.")
+            stopping.wait(60)
+        else:
+            LOG.info("Telegram webhook registered.")
+            return
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     if len(sys.argv) == 3 and sys.argv[1] == "register-webhook":
@@ -149,6 +175,13 @@ if __name__ == "__main__":
         print("Telegram webhook registered.")
     elif len(sys.argv) == 1:
         with ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8000"))), Handler) as server:
-            server.serve_forever()
+            origin = os.getenv("RENDER_EXTERNAL_URL")
+            stopping = threading.Event()
+            if origin and os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_OWNER_ID"):
+                threading.Thread(target=register_render_webhook, args=(origin, stopping), daemon=True).start()
+            try:
+                server.serve_forever()
+            finally:
+                stopping.set()
     else:
         sys.exit("Usage: python app.py [register-webhook HTTPS_SERVICE_ORIGIN]")

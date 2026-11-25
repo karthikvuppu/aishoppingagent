@@ -8,10 +8,11 @@ Python 3.11 or newer is sufficient. Start the server with `python app.py` and ch
 
 ## Connect Telegram on Render
 
-1. Create a bot with Telegram’s @BotFather and message the bot from your Telegram account.
-2. Obtain your numeric Telegram user ID from the `message.from.id` field in the bot’s `getUpdates` response before registering a webhook.
-3. Create a free Render web service from this repo or import its Blueprint. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, and `TELEGRAM_WEBHOOK_SECRET` in the service’s environment settings. Generate the webhook secret with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
-4. With the same token and secret set in your local environment, run `python app.py register-webhook https://YOUR-SERVICE.onrender.com` once after the service is live.
-5. Send “ghee and honey” to the bot from your private chat and check that both links appear. A Render free instance can take time to respond after a period of inactivity.
+1. Create a dedicated bot with Telegram’s @BotFather and message it from your Telegram account.
+2. Obtain your numeric Telegram user ID from the `message.from.id` field in the bot’s `getUpdates` response before enabling its webhook.
+3. In the Render service’s **Environment** settings, set `TELEGRAM_BOT_TOKEN` to the BotFather token and `TELEGRAM_OWNER_ID` to your numeric Telegram user ID. Choose **Save and deploy**. Render supplies the public URL and the app registers the webhook on startup.
+4. Send “ghee and honey” to the bot from your private chat and check that both links appear. A Render free instance can take time to respond after inactivity.
 
-Keep the bot token and webhook secret in environment variables. The service only replies to the configured owner in a private chat.
+Keep the bot token in Render's environment settings. The app derives the webhook secret from the token unless you set `TELEGRAM_WEBHOOK_SECRET` explicitly. The bot replies only to the configured owner in a private chat.
+
+For another HTTPS host, run `python app.py register-webhook HTTPS_SERVICE_ORIGIN` with the same Telegram environment variables as the server.
