@@ -101,7 +101,7 @@ def checkout_destination(path):
         return destination
     params = {
         f"checkout[shipping_address][{field}]": address[field]
-        for field in ("address1", "address2", "city", "province", "zip", "country")
+        for field in ("first_name", "last_name", "address1", "address2", "city", "province", "zip", "country", "phone")
         if isinstance(address.get(field), str) and address[field]
     }
     return f"{destination}?{urlencode(params)}" if params else destination
