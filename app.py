@@ -1,4 +1,4 @@
-"""Telegram webhook for the Vaaradhi Farms shopping assistant."""
+"""Telegram webhook for the shopping assistant."""
 
 import hmac
 import json
@@ -15,11 +15,14 @@ from urllib.request import Request, urlopen
 PRODUCTS = {
     "ghee": ("A2 Desi Cow Cultured Ghee", "https://vaaradhifarms.com/products/a2-desi-cow-ghee"),
     "honey": ("Farm Fresh Raw Natural Honey", "https://vaaradhifarms.com/products/natural-honey"),
+    "shampoo": ("Familio All in One Kids Shampoo & Conditioner", "https://familio.in/products/all-in-one-hair-shampoo-conditioner-for-babies-kids-teens"),
 }
-STORE_ORIGIN = "https://vaaradhifarms.com"
+STORE_NAMES = {"vaaradhifarms.com": "Vaaradhi Farms", "familio.in": "Familio"}
+VARAADHI_PRODUCTS = ("ghee", "honey")
+PRODUCT_WORD = "|".join(PRODUCTS)
+BUY_ITEM = rf"(?:[1-9][0-9]?\s+)?(?:{PRODUCT_WORD})"
 BUY_REQUEST = re.compile(
-    r"^/?(?:buy|order)\s+(both|(?:[1-9][0-9]?\s+)?(?:ghee|honey)"
-    r"(?:(?:\s+and\s+|,\s*)(?:[1-9][0-9]?\s+)?(?:ghee|honey))?)[.!]?$",
+    rf"^/?(?:buy|order)\s+(both|{BUY_ITEM}(?:(?:\s+and\s+|,\s*){BUY_ITEM})*)[.!]?$",
     re.IGNORECASE,
 )
 MAX_UPDATE_BYTES = 256 * 1024
@@ -64,12 +67,12 @@ def available_variant(product_url):
 def checkout_reply(chat_id, request):
     quantities = {}
     if request.lower() == "both":
-        quantities = dict.fromkeys(PRODUCTS, 1)
+        quantities = dict.fromkeys(VARAADHI_PRODUCTS, 1)
     else:
-        for quantity, key in re.findall(r"(?:(\d+)\s+)?(ghee|honey)", request.lower()):
+        for quantity, key in re.findall(rf"(?:(\d+)\s+)?({PRODUCT_WORD})", request.lower()):
             quantities[key] = quantities.get(key, 0) + int(quantity or "1")
 
-    items = []
+    carts = {}
     summary = []
     for key, quantity in quantities.items():
         name, url = PRODUCTS[key]
@@ -83,16 +86,20 @@ def checkout_reply(chat_id, request):
                 "text": f"I couldn’t confirm availability for {name}. Check the store before ordering.",
                 "reply_markup": {"inline_keyboard": [[{"text": name, "url": url}]]},
             }
-        items.append(f"{variant['id']}:{quantity}")
+        host = urlsplit(url).netloc
+        carts.setdefault(host, []).append(f"{variant['id']}:{quantity}")
         summary.append(f"{quantity} × {name} ({variant['title']})")
 
-    checkout_url = f"{STORE_ORIGIN}/cart/{','.join(items)}"
+    checkout_buttons = [
+        [{"text": f"Review and pay on {STORE_NAMES[host]}", "url": f"https://{host}/cart/{','.join(items)}"}]
+        for host, items in carts.items()
+    ]
     return {
         "chat_id": chat_id,
         "text": "Checkout is ready with the lowest-priced available size for each item.\n\n"
                 + "\n".join(summary)
-                + "\n\nReview shipping and the total, then pay on Vaaradhi Farms.",
-        "reply_markup": {"inline_keyboard": [[{"text": "Review and pay on Vaaradhi Farms", "url": checkout_url}]]},
+                + "\n\nReview shipping and the total, then pay on the store’s checkout page.",
+        "reply_markup": {"inline_keyboard": checkout_buttons},
     }
 
 
@@ -121,17 +128,19 @@ def reply(update, owner_id):
 
     words = set(re.findall(r"[a-z]+", text.lower()))
     selected = [product for key, product in PRODUCTS.items() if key in words]
-    if words.intersection({"both", "shop", "products"}):
+    if words.intersection({"shop", "products"}):
         selected = list(PRODUCTS.values())
+    elif "both" in words:
+        selected = [product for key, product in PRODUCTS.items() if key in VARAADHI_PRODUCTS or key in words]
 
     result = {"chat_id": chat["id"]}
     if selected:
-        result["text"] = "Choose a product to select its size and quantity and check out on Vaaradhi Farms."
+        result["text"] = "Choose a product to select its size and quantity and check out on the store’s website."
         result["reply_markup"] = {
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or both. For checkout, try “buy ghee and honey” or “buy 2 ghee and 1 honey”.'
+        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”.'
     return result
 
 
