@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
@@ -168,17 +169,63 @@ def aarogya_checkout_button(product, quantity):
     }
 
 
+def aarogya_catalog_reply(chat_id, page):
+    browse_url = f"{AAROGYA_ORIGIN}/collections/all-products"
+    buttons = []
+    try:
+        request = Request(
+            f"{browse_url}/products.json?limit=6&page={page}",
+            headers={"Accept": "application/json"},
+        )
+        with urlopen(request, timeout=3) as response:
+            products = json.loads(response.read(524_288))["products"]
+        for product in products:
+            title = product["title"]
+            handle = product["handle"]
+            if not re.fullmatch(r"[a-z0-9-]+", handle):
+                continue
+            variants = [
+                variant for variant in product["variants"]
+                if variant["available"] is True and type(variant["id"]) is int and variant["id"] > 0
+            ]
+            if variants:
+                variant = min(variants, key=lambda item: Decimal(item["price"]))
+                size = "" if variant["title"] == "Default Title" else f" · {variant['title']}"
+                button = {"text": f"Buy 1 × {title}{size}", "url": f"{AAROGYA_ORIGIN}/cart/{variant['id']}:1"}
+            else:
+                button = {"text": f"View {title} (sold out)", "url": f"{AAROGYA_ORIGIN}/products/{handle}"}
+            buttons.append([button])
+        message = f"Aarogya catalog · Page {page}. Tap an available item to open checkout."
+        if not products:
+            message = f"No products on page {page}."
+        if len(products) == 6:
+            message += f"\nNext page: Aarogya all {page + 1}"
+        if page > 1:
+            message += f"\nPrevious page: Aarogya all {page - 1}"
+    except (URLError, TimeoutError, ValueError, KeyError, TypeError, InvalidOperation):
+        message = "The catalog could not load. You can open Aarogya’s full catalog below."
+
+    return {
+        "chat_id": chat_id,
+        "text": message,
+        "reply_markup": {"inline_keyboard": buttons + [[{"text": "View full catalog on Aarogya", "url": browse_url}]]},
+    }
+
+
 def aarogya_reply(chat_id, text):
     command = re.fullmatch(r"/?(?:buy\s+)?aarogya(?:(?:\s*:\s*|\s+)(.*))?", text, re.IGNORECASE)
     if not command:
         return None
     query = (command.group(1) or "").strip()
+    catalog = re.fullmatch(r"all(?:\s+([1-9][0-9]{0,2}))?", query, re.IGNORECASE)
+    if catalog or not query:
+        return aarogya_catalog_reply(chat_id, int(catalog.group(1) or "1") if catalog else 1)
     quantity = 1
     amount = re.fullmatch(r"([1-9][0-9]?)\s+(.+)", query)
     if amount:
         quantity, query = int(amount.group(1)), amount.group(2)
     if not query or len(query) > 200:
-        return {"chat_id": chat_id, "text": "Try “Aarogya: nannari” or “buy Aarogya 2 nannari”."}
+        return {"chat_id": chat_id, "text": "Try “Aarogya all” to browse or “Aarogya: hair oil” to search."}
 
     params = {
         "q": query,
@@ -291,7 +338,7 @@ def reply(update, owner_id):
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. Try “Amazon: kids shampoo” or “Aarogya: nannari” to search those stores.'
+        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. Try “Amazon: kids shampoo” or “Aarogya all” to browse the catalog.'
     return result
 
 
