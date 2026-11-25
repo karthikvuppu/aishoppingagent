@@ -314,6 +314,16 @@ CASE_METHODS = {
     "6": ("Act", "Send the act and section, if known. Include Pending, Disposed, or Both."),
     "7": ("Case type", "Send the case type and registration year. Include Pending, Disposed, or Both."),
 }
+TELANGANA_DISTRICT_CASE_TYPES = {
+    "EP": "Execution Petition",
+    "OS": "Original Suit",
+    "OP": "Original Petition",
+    "FCOP": "Family Court Original Petition",
+    "GWOP": "Guardian and Wards Original Petition",
+    "HMOP": "Hindu Marriage Original Petition",
+    "MC": "Maintenance Case",
+    "MP": "Maintenance Petition",
+}
 CASE_SESSIONS = {}
 CASE_LOCK = threading.Lock()
 CNR_PATTERN = re.compile(r"[A-Z]{4}[0-9]{12}", re.IGNORECASE)
@@ -337,6 +347,8 @@ def case_lookup(chat_id, court, method, reference, location=""):
         if court == "district" and method == "Case number" and re.search(r"\branga\s*reddy\b", location, re.I):
             portal = "https://rangareddy.dcourts.gov.in/case-status-search-by-case-number/"
             instructions = "Choose your court complex or establishment and enter the case details below."
+            if re.search(r"\bshad\s*nagar\b", location, re.I):
+                instructions = "Choose Shadnagar, ADJ Court Complex, then enter the case details below."
         else:
             instructions = f"Open Case Status, select your court, and choose {method}. Enter the details below."
         button_label = "Open eCourts Case Status"
@@ -415,7 +427,15 @@ def court_reply(chat_id, text):
                 match = re.fullmatch(r"([A-Za-z][A-Za-z. ]*?)[,\s]+(\d+)\s*[,/ -]\s*(\d{4})", text)
                 if match:
                     kind, number, year = match.groups()
-                    reference = (f"Court: {session['location']}\nCase type: {kind.upper()}\n"
+                    case_type = kind.upper().strip()
+                    if session["court"] == "district" and re.search(
+                        r"\b(?:telangana|ranga\s*reddy)\b", session["location"], re.I
+                    ):
+                        code = re.sub(r"[.\s]", "", case_type)
+                        name = TELANGANA_DISTRICT_CASE_TYPES.get(code)
+                        if name:
+                            case_type = f"{name} ({code})"
+                    reference = (f"Court: {session['location']}\nCase type: {case_type}\n"
                                  f"Case number: {number}\nRegistration year: {year}")
             session["step"] = "result"
             return case_lookup(chat_id, session["court"], session["method"], reference, session["location"])
