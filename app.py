@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
@@ -26,6 +27,7 @@ BUY_REQUEST = re.compile(
     rf"^/?(?:buy|order)\s+(both|{BUY_ITEM}(?:(?:\s+and\s+|,\s*){BUY_ITEM})*)[.!]?$",
     re.IGNORECASE,
 )
+AAROGYA_ORIGIN = "https://www.aarogyanutrimix.in"
 MAX_UPDATE_BYTES = 256 * 1024
 LOG = logging.getLogger(__name__)
 
@@ -146,6 +148,73 @@ def checkout_reply(chat_id, request):
     }
 
 
+def aarogya_checkout_button(product, quantity):
+    handle = product.get("handle")
+    title = product.get("title")
+    if not isinstance(handle, str) or not re.fullmatch(r"[a-z0-9-]+", handle):
+        return None
+    if not isinstance(title, str) or not title.strip():
+        return None
+    try:
+        variant = available_variant(f"{AAROGYA_ORIGIN}/products/{handle}")
+    except (URLError, TimeoutError, ValueError, KeyError, TypeError):
+        return None
+    if variant is None:
+        return None
+    size = "" if variant["title"] == "Default Title" else f" · {variant['title']}"
+    return {
+        "text": f"{quantity} × {title}{size}",
+        "url": f"{AAROGYA_ORIGIN}/cart/{variant['id']}:{quantity}",
+    }
+
+
+def aarogya_reply(chat_id, text):
+    command = re.fullmatch(r"/?(?:buy\s+)?aarogya(?:(?:\s*:\s*|\s+)(.*))?", text, re.IGNORECASE)
+    if not command:
+        return None
+    query = (command.group(1) or "").strip()
+    quantity = 1
+    amount = re.fullmatch(r"([1-9][0-9]?)\s+(.+)", query)
+    if amount:
+        quantity, query = int(amount.group(1)), amount.group(2)
+    if not query or len(query) > 200:
+        return {"chat_id": chat_id, "text": "Try “Aarogya: nannari” or “buy Aarogya 2 nannari”."}
+
+    params = {
+        "q": query,
+        "resources[type]": "product",
+        "resources[limit]": 4,
+        "resources[options][unavailable_products]": "hide",
+    }
+    search_url = f"{AAROGYA_ORIGIN}/search?{urlencode({'q': query, 'type': 'product'})}"
+    try:
+        request = Request(
+            f"{AAROGYA_ORIGIN}/search/suggest.json?{urlencode(params)}",
+            headers={"Accept": "application/json"},
+        )
+        with urlopen(request, timeout=3) as response:
+            products = json.loads(response.read(262_144))["resources"]["results"]["products"]
+        with ThreadPoolExecutor(max_workers=4) as workers:
+            results = workers.map(
+                lambda product: aarogya_checkout_button(product, quantity),
+                (product for product in products[:4] if isinstance(product, dict)),
+            )
+            buttons = [[button] for button in results if button is not None]
+    except (URLError, TimeoutError, ValueError, KeyError, TypeError):
+        buttons = []
+
+    return {
+        "chat_id": chat_id,
+        "text": (
+            "Select a product to open Aarogya checkout. Each option uses the lowest-priced available size."
+            if buttons else "I couldn’t find an available checkout option. You can check Aarogya’s search results."
+        ),
+        "reply_markup": {
+            "inline_keyboard": buttons + [[{"text": "Search on Aarogya", "url": search_url}]]
+        },
+    }
+
+
 def amazon_reply(chat_id, text):
     command = re.fullmatch(r"/?amazon(?:\s*:\s*|\s+)(.*)", text, re.IGNORECASE)
     query = command.group(1).strip() if command else text
@@ -196,6 +265,10 @@ def reply(update, owner_id):
         return None
 
     text = text.strip()
+    aarogya = aarogya_reply(chat["id"], text)
+    if aarogya is not None:
+        return aarogya
+
     amazon = amazon_reply(chat["id"], text)
     if amazon is not None:
         return amazon
@@ -218,7 +291,7 @@ def reply(update, owner_id):
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. For Amazon India, try “Amazon: kids shampoo”.'
+        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. Try “Amazon: kids shampoo” or “Aarogya: nannari” to search those stores.'
     return result
 
 
