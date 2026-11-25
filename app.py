@@ -300,157 +300,6 @@ def amazon_reply(chat_id, text):
     }
 
 
-
-COURT_PORTALS = {
-    "district": "https://services.ecourts.gov.in/ecourtindia_v6/",
-    "high": "https://hcservices.ecourts.gov.in/hcservices/main.php",
-}
-CASE_METHODS = {
-    "1": ("Case number", "Send the case type, registered number, and registration year."),
-    "2": ("Filing number", "Send the filing number and filing year."),
-    "3": ("Party name", "Send the full or partial party name and year, if known. Include Pending, Disposed, or Both."),
-    "4": ("Advocate", "Send the advocate name or bar registration number. Include Pending, Disposed, or Both if known."),
-    "5": ("FIR", "Send the police station, FIR number, and FIR year."),
-    "6": ("Act", "Send the act and section, if known. Include Pending, Disposed, or Both."),
-    "7": ("Case type", "Send the case type and registration year. Include Pending, Disposed, or Both."),
-}
-TELANGANA_DISTRICT_CASE_TYPES = {
-    "EP": "Execution Petition",
-    "OS": "Original Suit",
-    "OP": "Original Petition",
-    "FCOP": "Family Court Original Petition",
-    "GWOP": "Guardian and Wards Original Petition",
-    "HMOP": "Hindu Marriage Original Petition",
-    "MC": "Maintenance Case",
-    "MP": "Maintenance Petition",
-}
-CASE_SESSIONS = {}
-CASE_LOCK = threading.Lock()
-CNR_PATTERN = re.compile(r"[A-Z]{4}[0-9]{12}", re.IGNORECASE)
-CASE_FIELDS = {
-    "CNR": r"CNR(?: Number)?",
-    "Case number": r"(?:Case|Registration) Number",
-    "Status": r"(?:Case Status|Current Status|Status)",
-    "Stage": r"(?:Stage of Case|Case Stage|Stage)",
-    "Next hearing": r"(?:Next Hearing Date|Next Hearing|Next Date)",
-    "Disposal date": r"(?:Date of Disposal|Disposal Date)",
-    "Court": r"(?:Court Name|Court Number and Judge|Court)",
-}
-
-
-def case_lookup(chat_id, court, method, reference, location=""):
-    portal = COURT_PORTALS[court]
-    if method == "CNR":
-        instructions = "Open Search by CNR and enter the CNR below."
-        button_label = "Open eCourts CNR search"
-    else:
-        if court == "district" and method == "Case number" and re.search(r"\branga\s*reddy\b", location, re.I):
-            portal = "https://rangareddy.dcourts.gov.in/case-status-search-by-case-number/"
-            instructions = "Choose your court complex or establishment and enter the case details below."
-            if re.search(r"\bshad\s*nagar\b", location, re.I):
-                instructions = "Choose Shadnagar, ADJ Court Complex, then enter the case details below."
-        else:
-            instructions = f"Open Case Status, select your court, and choose {method}. Enter the details below."
-        button_label = "Open eCourts Case Status"
-    return {
-        "chat_id": chat_id,
-        "text": (
-            f"{instructions}\n\n{reference}\n\nComplete the CAPTCHA on eCourts. "
-            "If several records match, open the correct one. Paste the Case Status text here "
-            "with the field labels so I can summarize it."
-        ),
-        "reply_markup": {"inline_keyboard": [[{"text": button_label, "url": portal}]]},
-    }
-
-
-def court_reply(chat_id, text):
-    normalized = text.lower()
-    start = re.fullmatch(r"(?:/case(?:status)?|(?:check\s+)?(?:ecourts\s+)?case\s+status)(?:[ :.,]+(.*))?", text, re.I)
-    with CASE_LOCK:
-        now = time.monotonic()
-        session = CASE_SESSIONS.get(chat_id)
-        if session and now > session["expires"]:
-            CASE_SESSIONS.pop(chat_id, None)
-            session = None
-
-        def respond(message):
-            return {"chat_id": chat_id, "text": message}
-
-        if normalized in {"/cancelcase", "/cancel"} and session:
-            CASE_SESSIONS.pop(chat_id)
-            return respond("Case lookup cancelled.")
-        if start:
-            session = {"step": "start", "expires": now + 1800}
-            CASE_SESSIONS[chat_id] = session
-            text = (start.group(1) or "").strip()
-            normalized = text.lower()
-        if not session:
-            return None
-
-        step = session["step"]
-        session["expires"] = now + 1800
-        compact = re.sub(r"[\s-]", "", text)
-        if step in {"start", "court"} and CNR_PATTERN.fullmatch(compact):
-            session["step"] = "result"
-            court = "high" if compact[2:4].upper() == "HC" else "district"
-            return case_lookup(chat_id, court, "CNR", f"CNR: {compact.upper()}")
-
-        if step in {"start", "court"}:
-            if normalized in {"district", "district court", "taluka", "taluka court"}:
-                session.update(step="location", court="district")
-                return respond("Send the state, district, and court complex.")
-            if normalized in {"high", "high court"}:
-                session.update(step="location", court="high")
-                return respond("Send the High Court and bench.")
-            session["step"] = "court"
-            return respond("Send the 16-character CNR if you have it. Otherwise reply District or High Court. /cancelcase ends the lookup.")
-
-        if step == "location":
-            if not text or len(text) > 250:
-                return respond("Send the court location in a short message.")
-            session.update(step="method", location=text)
-            choices = "\n".join(f"{number}. {label}" for number, (label, _) in CASE_METHODS.items())
-            return respond(f"What details do you have? Reply with a number.\n{choices}")
-
-        if step == "method":
-            if normalized not in CASE_METHODS:
-                return respond("Reply 1 for case number, 2 for filing number, 3 for party name, 4 for advocate, 5 for FIR, 6 for act, or 7 for case type.")
-            label, question = CASE_METHODS[normalized]
-            session.update(step="details", method=label)
-            return respond(question)
-
-        if step == "details":
-            if not text or len(text) > 1000:
-                return respond("Send the lookup details in a short message.")
-            reference = f"Court: {session['location']}\nDetails: {text}"
-            if session["method"] == "Case number":
-                match = re.fullmatch(r"([A-Za-z][A-Za-z. ]*?)[,\s]+(\d+)\s*[,/ -]\s*(\d{4})", text)
-                if match:
-                    kind, number, year = match.groups()
-                    case_type = kind.upper().strip()
-                    if session["court"] == "district" and re.search(
-                        r"\b(?:telangana|ranga\s*reddy)\b", session["location"], re.I
-                    ):
-                        code = re.sub(r"[.\s]", "", case_type)
-                        name = TELANGANA_DISTRICT_CASE_TYPES.get(code)
-                        if name:
-                            case_type = f"{name} ({code})"
-                    reference = (f"Court: {session['location']}\nCase type: {case_type}\n"
-                                 f"Case number: {number}\nRegistration year: {year}")
-            session["step"] = "result"
-            return case_lookup(chat_id, session["court"], session["method"], reference, session["location"])
-
-        fields = []
-        for label, pattern in CASE_FIELDS.items():
-            match = re.search(rf"^[ \t]*(?:{pattern})[ \t]*(?::[ \t]*|\t+|\n[ \t]*)([^\r\n]+)", text, re.I | re.M)
-            if match:
-                fields.append(f"{label}: {match.group(1).strip()[:220]}")
-        if not fields:
-            return respond("Paste the eCourts result as text with its labels, such as Case Status, Stage of Case, or Next Hearing Date.")
-        CASE_SESSIONS.pop(chat_id)
-        return respond("From the eCourts result you pasted:\n" + "\n".join(fields) + "\n\nCheck the official record for any updates.")
-
-
 def reply(update, owner_id):
     if not isinstance(update, dict):
         return None
@@ -483,11 +332,6 @@ def reply(update, owner_id):
     if purchase:
         return checkout_reply(chat["id"], purchase.group(1))
 
-    if text.lower() not in {*PRODUCTS, "ghee and honey", "both", "shop", "products"}:
-        court = court_reply(chat["id"], text)
-        if court is not None:
-            return court
-
     words = set(re.findall(r"[a-z]+", text.lower()))
     selected = [product for key, product in PRODUCTS.items() if key in words]
     if words.intersection({"shop", "products"}):
@@ -502,7 +346,7 @@ def reply(update, owner_id):
             "inline_keyboard": [[{"text": name, "url": url}] for name, url in selected]
         }
     else:
-        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. Try “Amazon: kids shampoo”, “Aarogya all”, or “case status”.'
+        result["text"] = 'Ask for ghee, honey, or shampoo. For checkout, try “buy shampoo” or “buy ghee and shampoo”. Try “Amazon: kids shampoo” or “Aarogya all” to browse the catalog.'
     return result
 
 
