@@ -20,7 +20,12 @@ PRODUCTS = {
     "honey": ("Farm Fresh Raw Natural Honey", "https://vaaradhifarms.com/products/natural-honey"),
     "shampoo": ("Familio All in One Kids Shampoo & Conditioner", "https://familio.in/products/all-in-one-hair-shampoo-conditioner-for-babies-kids-teens"),
 }
-STORE_NAMES = {"vaaradhifarms.com": "Vaaradhi Farms", "familio.in": "Familio"}
+AAROGYA_HOST = "www.aarogyanutrimix.in"
+STORE_NAMES = {
+    "vaaradhifarms.com": "Vaaradhi Farms",
+    "familio.in": "Familio",
+    AAROGYA_HOST: "Aarogya Nutri Mix",
+}
 VARAADHI_PRODUCTS = ("ghee", "honey")
 PRODUCT_WORD = "|".join(PRODUCTS)
 BUY_ITEM = rf"(?:[1-9][0-9]?\s+)?(?:{PRODUCT_WORD})"
@@ -28,7 +33,7 @@ BUY_REQUEST = re.compile(
     rf"^/?(?:buy|order)\s+(both|{BUY_ITEM}(?:(?:\s+and\s+|,\s*){BUY_ITEM})*)[.!]?$",
     re.IGNORECASE,
 )
-AAROGYA_ORIGIN = "https://www.aarogyanutrimix.in"
+AAROGYA_ORIGIN = f"https://{AAROGYA_HOST}"
 MAX_UPDATE_BYTES = 256 * 1024
 LOG = logging.getLogger(__name__)
 
@@ -165,7 +170,7 @@ def aarogya_checkout_button(product, quantity):
     size = "" if variant["title"] == "Default Title" else f" · {variant['title']}"
     return {
         "text": f"{quantity} × {title}{size}",
-        "url": f"{AAROGYA_ORIGIN}/cart/{variant['id']}:{quantity}",
+        "url": checkout_button_url(AAROGYA_HOST, [f"{variant['id']}:{quantity}"]),
     }
 
 
@@ -191,7 +196,10 @@ def aarogya_catalog_reply(chat_id, page):
             if variants:
                 variant = min(variants, key=lambda item: Decimal(item["price"]))
                 size = "" if variant["title"] == "Default Title" else f" · {variant['title']}"
-                button = {"text": f"Buy 1 × {title}{size}", "url": f"{AAROGYA_ORIGIN}/cart/{variant['id']}:1"}
+                button = {
+                    "text": f"Buy 1 × {title}{size}",
+                    "url": checkout_button_url(AAROGYA_HOST, [f"{variant['id']}:1"]),
+                }
             else:
                 button = {"text": f"View {title} (sold out)", "url": f"{AAROGYA_ORIGIN}/products/{handle}"}
             buttons.append([button])
