@@ -382,6 +382,70 @@ code {{overflow-wrap: anywhere;}}
 </main></html>""".encode()
 
 
+TGSPDCL_BILL_REVIEW = "https://www.billdesk.com/pgidsk/pgmerc/tsspdclpgi/TSSPDCLPGIConfirm.jsp"
+
+
+def electricity_service(account):
+    number = os.getenv(f"TGSPDCL_SERVICE_{account}", "").strip()
+    return number if re.fullmatch(r"1[0-9]{8}", number) else None
+
+
+def electricity_reply(chat_id):
+    origin = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    buttons = []
+    if origin and webhook_secret():
+        expires = int(time.time()) + 900
+        for account in ("1", "2"):
+            number = electricity_service(account)
+            if number:
+                path = f"/electricity/{account}/{expires}"
+                buttons.append([{
+                    "text": f"Review bill · TGSPDCL · {number[-4:]}",
+                    "url": f"{origin}{path}/{checkout_signature(path)}",
+                }])
+    if not buttons:
+        return {"chat_id": chat_id, "text": "No TGSPDCL bill accounts are configured yet."}
+    return {
+        "chat_id": chat_id,
+        "text": "Choose a saved TGSPDCL account to review its current bill.",
+        "reply_markup": {"inline_keyboard": buttons},
+    }
+
+
+def electricity_bill_page(path):
+    match = re.fullmatch(r"(/electricity/([12])/([0-9]{1,12}))/([a-f0-9]{64})", path)
+    if not match or not webhook_secret():
+        return None
+    signed_path, account, expires, signature = match.groups()
+    if int(expires) < time.time() or not hmac.compare_digest(checkout_signature(signed_path), signature):
+        return None
+    number = electricity_service(account)
+    if not number:
+        return None
+    return f"""<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TGSPDCL bill review</title>
+<style>
+body {{font: 1rem system-ui; max-width: 32rem; padding: 1.5rem; margin: 2vh auto;}}
+button {{font: inherit; color: white; background: #164aa8; border: 0; border-radius: .5rem; padding: .8rem 1rem;}}
+</style>
+<main>
+<h1>TGSPDCL electricity bill</h1>
+<p>Service number ending {number[-4:]}</p>
+<form action="{TGSPDCL_BILL_REVIEW}" method="post">
+<input type="hidden" name="uscno" value="{number}">
+<input type="hidden" name="choice" value="on">
+<input type="hidden" name="circle" value="">
+<input type="hidden" name="ero" value="">
+<input type="hidden" name="sno" value="">
+<input type="hidden" name="preflag" value="N">
+<input type="hidden" name="txtEmailID" value="NA">
+<button type="submit">Review current bill on BillDesk</button>
+</form>
+</main></html>""".encode()
+
+
 def reply(update, owner_id):
     if not isinstance(update, dict):
         return None
@@ -402,6 +466,9 @@ def reply(update, owner_id):
         return None
 
     text = text.strip()
+    if re.fullmatch(r"/?(?:pay\s+)?electricity(?:[_ ]bills?)?", text, re.IGNORECASE):
+        return electricity_reply(chat["id"])
+
     if re.fullmatch(r"/?(?:get(?:\s+(?:fastag\s+)?balances?)?|(?:check\s+)?fastag\s+balances?)", text, re.IGNORECASE):
         return fastag_balance_reply(chat["id"])
 
@@ -453,10 +520,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
             self.respond(200, b"ok\n")
-        elif self.path.startswith("/fastag/"):
-            page = fastag_payment_page(self.path)
+        elif self.path.startswith(("/fastag/", "/electricity/")):
+            page = (electricity_bill_page(self.path) if self.path.startswith("/electricity/")
+                    else fastag_payment_page(self.path))
             if page is None:
-                self.respond(404, b"Recharge link expired or invalid. Ask the bot for a new link.")
+                self.respond(404, b"Link expired or invalid. Ask the bot for a new link.")
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
