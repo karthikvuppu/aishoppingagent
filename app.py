@@ -10,7 +10,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
-from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
@@ -302,71 +301,21 @@ def amazon_reply(chat_id, text):
     }
 
 
-FASTAG_AMOUNT = "500.00"
-FASTAG_ISSUERS = {
-    "idfc": ("IDFC FIRST Bank", "idfcnetc"),
-    "hdfc": ("HDFC Bank", "hdfcbank"),
-}
+PAYTM_FASTAG_URL = "https://paytm.com/fastag-recharge"
 
 
-def fastag_vehicle(issuer):
-    plate = os.getenv(f"FASTAG_{issuer.upper()}_VEHICLE", "").strip().upper()
-    return plate if re.fullmatch(r"[A-Z0-9]{6,12}", plate) else None
-
-
-def fastag_reply(chat_id):
-    origin = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
-    buttons = []
-    if origin and webhook_secret():
-        expires = int(time.time()) + 900
-        for issuer, (bank, _) in FASTAG_ISSUERS.items():
-            plate = fastag_vehicle(issuer)
-            if plate:
-                path = f"/fastag/{issuer}/{expires}"
-                buttons.append([{
-                    "text": f"₹500 · {bank} · {plate[-4:]}",
-                    "url": f"{origin}{path}/{checkout_signature(path)}",
-                }])
-
-    message = ("Choose a vehicle to open a ₹500 recharge. Verify the recipient in your UPI app, then approve the payment."
-               if buttons else "Open Paytm to recharge your FASTag.")
-    buttons.append([{"text": "Open Paytm FASTag", "url": "https://paytm.com/fastag-recharge"}])
-    return {"chat_id": chat_id, "text": message, "reply_markup": {"inline_keyboard": buttons}}
-
-
-def fastag_payment_page(path):
-    match = re.fullmatch(r"(/fastag/(idfc|hdfc)/([0-9]{1,12}))/([a-f0-9]{64})", path)
-    if not match or not webhook_secret():
-        return None
-    signed_path, issuer, expires, signature = match.groups()
-    if int(expires) < time.time() or not hmac.compare_digest(checkout_signature(signed_path), signature):
-        return None
-    plate = fastag_vehicle(issuer)
-    if not plate:
-        return None
-
-    bank, handle = FASTAG_ISSUERS[issuer]
-    vpa = f"netc.{plate}@{handle}"
-    payment = "upi://pay?" + urlencode({
-        "pa": vpa, "pn": bank, "am": FASTAG_AMOUNT, "cu": "INR", "tn": "FASTag recharge",
-    })
-    return f"""<!doctype html>
-<html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FASTag recharge</title>
-<style>
-body {{font: 1rem system-ui; max-width: 32rem; padding: 1.5rem; margin: 2vh auto;}}
-a {{display: inline-block; padding: .8rem 1rem; background: #164aa8; color: white; border-radius: .5rem;}}
-code {{overflow-wrap: anywhere;}}
-</style>
-<main>
-<h1>₹500 FASTag recharge</h1>
-<p>{escape(bank)} · Vehicle ending {escape(plate[-4:])}</p>
-<p><a href="{escape(payment, quote=True)}">Open UPI app</a></p>
-<p>Verify the recipient and amount in your UPI app before approving.</p>
-<p>If the app does not open, enter this UPI ID in your payment app and set the amount to ₹500.</p>
-<p><code>{escape(vpa)}</code></p>
-</main></html>""".encode()
+def fastag_reply(chat_id, balance=False):
+    if balance:
+        message = "In Paytm, tap Check now on the saved IDFC FIRST or HDFC FASTag."
+        label = "Check balance in Paytm"
+    else:
+        message = "In Paytm, select the saved vehicle and review the recharge amount before paying."
+        label = "Recharge in Paytm"
+    return {
+        "chat_id": chat_id,
+        "text": message,
+        "reply_markup": {"inline_keyboard": [[{"text": label, "url": PAYTM_FASTAG_URL}]]},
+    }
 
 
 def reply(update, owner_id):
@@ -390,20 +339,7 @@ def reply(update, owner_id):
 
     text = text.strip()
     if re.fullmatch(r"/?(?:get(?:\s+(?:fastag\s+)?balances?)?|(?:check\s+)?fastag\s+balances?)", text, re.IGNORECASE):
-        return {
-            "chat_id": chat["id"],
-            "text": (
-                "Open your bank’s WhatsApp balance check from your registered number. "
-                "For IDFC, send Hi and choose FASTag Balance. "
-                "For HDFC, send FASTag and choose Balance/Recharge. "
-                "You can also use Check now for either vehicle in Paytm."
-            ),
-            "reply_markup": {"inline_keyboard": [
-                [{"text": "IDFC FIRST balance", "url": "https://wa.me/919555555555?text=Hi"}],
-                [{"text": "HDFC FASTag balance", "url": "https://wa.me/917070022222?text=FASTag"}],
-                [{"text": "Open Paytm FASTag", "url": "https://paytm.com/fastag-recharge"}],
-            ]},
-        }
+        return fastag_reply(chat["id"], balance=True)
 
     if re.fullmatch(r"/?(?:recharge\s+)?(?:fastag|fast[ -]?tag)(?:\s+recharge)?", text, re.IGNORECASE):
         return fastag_reply(chat["id"])
@@ -453,18 +389,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
             self.respond(200, b"ok\n")
-        elif self.path.startswith("/fastag/"):
-            page = fastag_payment_page(self.path)
-            if page is None:
-                self.respond(404, b"Recharge link expired or invalid. Ask the bot for a new link.")
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "private, no-store")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Length", str(len(page)))
-            self.end_headers()
-            self.wfile.write(page)
         elif self.path.startswith("/checkout/"):
             destination = checkout_destination(self.path)
             if destination is None:
