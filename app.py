@@ -329,8 +329,15 @@ CASE_FIELDS = {
 
 
 def case_lookup(chat_id, court, method, reference):
-    instructions = ("Open Search by CNR and enter the CNR." if method == "CNR"
-                    else f"Open Case Status, select your court, and choose {method}.")
+    portal = COURT_PORTALS[court]
+    if method == "CNR":
+        instructions = "Open Search by CNR and enter the CNR below."
+        button_label = "Open eCourts CNR search"
+    else:
+        if court == "district":
+            portal += "casestatus/"
+        instructions = f"Select the court and the {method} tab. Enter the details below."
+        button_label = "Open eCourts Case Status"
     return {
         "chat_id": chat_id,
         "text": (
@@ -338,7 +345,7 @@ def case_lookup(chat_id, court, method, reference):
             "If several records match, open the correct one. Paste the Case Status text here "
             "with the field labels so I can summarize it."
         ),
-        "reply_markup": {"inline_keyboard": [[{"text": "Open official eCourts", "url": COURT_PORTALS[court]}]]},
+        "reply_markup": {"inline_keyboard": [[{"text": button_label, "url": portal}]]},
     }
 
 
@@ -401,9 +408,15 @@ def court_reply(chat_id, text):
         if step == "details":
             if not text or len(text) > 1000:
                 return respond("Send the lookup details in a short message.")
+            reference = f"Court: {session['location']}\nDetails: {text}"
+            if session["method"] == "Case number":
+                match = re.fullmatch(r"([A-Za-z][A-Za-z. ]*?)\s+(\d+)\s*[/ -]\s*(\d{4})", text)
+                if match:
+                    kind, number, year = match.groups()
+                    reference = (f"Court: {session['location']}\nCase type: {kind.upper()}\n"
+                                 f"Case number: {number}\nRegistration year: {year}")
             session["step"] = "result"
-            return case_lookup(chat_id, session["court"], session["method"],
-                               f"Court: {session['location']}\nDetails: {text}")
+            return case_lookup(chat_id, session["court"], session["method"], reference)
 
         fields = []
         for label, pattern in CASE_FIELDS.items():
