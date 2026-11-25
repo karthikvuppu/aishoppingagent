@@ -7,9 +7,10 @@ import os
 import re
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 PRODUCTS = {
@@ -64,6 +65,48 @@ def available_variant(product_url):
     return min(variants, key=lambda variant: variant["price"], default=None)
 
 
+def checkout_signature(path):
+    return hmac.digest(
+        webhook_secret().encode(), f"checkout-address:{path}".encode(), "sha256"
+    ).hex()
+
+
+def checkout_button_url(host, items):
+    cart = ",".join(items)
+    origin = os.getenv("RENDER_EXTERNAL_URL")
+    if origin and webhook_secret() and os.getenv("CHECKOUT_SHIPPING_ADDRESS"):
+        path = f"/checkout/{host}/{cart}/{int(time.time()) + 900}"
+        return f"{origin.rstrip('/')}{path}/{checkout_signature(path)}"
+    return f"https://{host}/cart/{cart}"
+
+
+def checkout_destination(path):
+    match = re.fullmatch(
+        r"(/checkout/([a-z.]+)/([0-9]+:[0-9]+(?:,[0-9]+:[0-9]+)*)/([0-9]{1,12}))/([a-f0-9]{64})",
+        path,
+    )
+    if not match or not webhook_secret():
+        return None
+    signed_path, host, cart, expiry, signature = match.groups()
+    if host not in STORE_NAMES or not hmac.compare_digest(checkout_signature(signed_path), signature):
+        return None
+    if int(expiry) < time.time():
+        return None
+    destination = f"https://{host}/cart/{cart}"
+    try:
+        address = json.loads(os.getenv("CHECKOUT_SHIPPING_ADDRESS", "{}"))
+    except ValueError:
+        return destination
+    if not isinstance(address, dict):
+        return destination
+    params = {
+        f"checkout[shipping_address][{field}]": address[field]
+        for field in ("address1", "address2", "city", "province", "zip", "country")
+        if isinstance(address.get(field), str) and address[field]
+    }
+    return f"{destination}?{urlencode(params)}" if params else destination
+
+
 def checkout_reply(chat_id, request):
     quantities = {}
     if request.lower() == "both":
@@ -91,7 +134,7 @@ def checkout_reply(chat_id, request):
         summary.append(f"{quantity} × {name} ({variant['title']})")
 
     checkout_buttons = [
-        [{"text": f"Review and pay on {STORE_NAMES[host]}", "url": f"https://{host}/cart/{','.join(items)}"}]
+        [{"text": f"Review and pay on {STORE_NAMES[host]}", "url": checkout_button_url(host, items)}]
         for host, items in carts.items()
     ]
     return {
@@ -159,6 +202,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
             self.respond(200, b"ok\n")
+        elif self.path.startswith("/checkout/"):
+            destination = checkout_destination(self.path)
+            if destination is None:
+                self.respond(404, b"Checkout link expired or invalid. Ask the bot for a new link.")
+                return
+            self.send_response(302)
+            self.send_header("Location", destination)
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         else:
             self.respond(404)
 
