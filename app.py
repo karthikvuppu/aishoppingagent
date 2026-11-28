@@ -466,6 +466,29 @@ def reply(update, owner_id):
         return None
 
     text = text.strip()
+    if re.fullmatch(r"/?(?:(?:check|pending|traffic)\s+)*challans?", text, re.IGNORECASE):
+        buttons = []
+        for issuer in FASTAG_ISSUERS:
+            plate = fastag_vehicle(issuer)
+            if plate:
+                buttons.append([{
+                    "text": f"Copy vehicle ending {plate[-4:]}",
+                    "copy_text": {"text": plate},
+                }])
+        buttons.append([{
+            "text": "Open Telangana Police eChallan",
+            "url": "https://echallan.tspolice.gov.in/",
+        }])
+        return {
+            "chat_id": chat["id"],
+            "text": (
+                "Open the official portal and enter the vehicle number. Complete its verification, "
+                "then select all eligible pending challans for that vehicle if the portal offers it. "
+                "Review the total before paying. Check each vehicle separately."
+            ),
+            "reply_markup": {"inline_keyboard": buttons},
+        }
+
     if re.fullmatch(r"/?(?:pay\s+)?electricity(?:[_ ]bills?)?", text, re.IGNORECASE):
         return electricity_reply(chat["id"])
 
